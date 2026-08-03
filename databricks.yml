@@ -1,0 +1,192 @@
+# Databricks Asset Bundle for ComplaintIQ.
+#
+# This bundle declares the Databricks-side *automation* for the project:
+#   - a Unity Catalog schema (workspace.complaintiq) to namespace the project,
+#   - a Unity Catalog Volume within it that holds the large CFPB datasets
+#     (parquet/csv), reachable at /Volumes/workspace/complaintiq/data,
+#   - the complaintiq wheel (built from src/), installed on the serverless
+#     environment so the notebooks can `import complaintiq`,
+#   - a serverless job that runs the full notebook pipeline (01 -> 10) from the
+#     Git folder, one task per notebook, chained in order.
+#
+# It does NOT sync notebooks/code. Bi-directional editing is handled by a
+# Databricks Git folder (see the `db-*` targets in the Makefile): git is the
+# sync medium -- edit locally or in the Databricks UI and push/pull to keep
+# both sides in step. This bundle manages cloud resources and the wheel artifact.
+#
+# `databricks bundle` matches the target `workspace.host` below to the matching
+# profile in ~/.databrickscfg automatically, so no -p flag is required.
+
+bundle:
+  name: complaintiq
+  # Use the experimental direct deployment engine instead of Terraform. It talks
+  # to the Databricks REST APIs directly, so deploys need no Terraform download
+  # and no local Terraform binary.
+  engine: direct
+
+variables:
+  catalog:
+    description: Unity Catalog catalog that holds the data volume.
+    default: workspace
+  schema:
+    description: Schema within the catalog that holds the data volume.
+    default: complaintiq
+  volume:
+    description: Managed volume name for the CFPB datasets.
+    default: data
+  notebook_dir:
+    description: >-
+      Absolute workspace path to the notebooks directory. Resolved for the
+      signed-in user (no identity committed) and points at the Git folder clone,
+      so the job always runs what you have pushed.
+    default: /Workspace/Users/${workspace.current_user.userName}/ComplaintIQ/notebooks
+
+# Build the complaintiq wheel from src/ (see [build-system] in pyproject.toml).
+# `databricks bundle deploy` runs the build and uploads the wheel; the serverless
+# environment below installs it so notebooks can `import complaintiq` there too.
+artifacts:
+  complaintiq_wheel:
+    type: whl
+    # uv builds the wheel with its own build backend (uv_build, see pyproject), so
+    # this does not depend on which `python` is on PATH.
+    build: uv build --wheel --out-dir dist
+    path: .
+    files:
+      - source: dist/complaintiq-*.whl
+
+targets:
+  # Databricks Free Edition workspace (serverless-only). Default target.
+  # No host is hardcoded: it is supplied by the CLI profile you pass with
+  # -p / --profile (set DATABRICKS_PROFILE in local.mk), so every developer
+  # targets their own workspace.
+  free:
+    default: true
+
+resources:
+  schemas:
+    complaintiq_schema:
+      catalog_name: ${var.catalog}
+      name: ${var.schema}
+      comment: ComplaintIQ datasets and derived tables.
+
+  volumes:
+    complaintiq_data:
+      catalog_name: ${var.catalog}
+      # Reference the bundle-managed schema so deploy creates it before the
+      # volume (rather than assuming a pre-existing schema).
+      schema_name: ${resources.schemas.complaintiq_schema.name}
+      name: ${var.volume}
+      volume_type: MANAGED
+      comment: CFPB consumer complaint datasets (parquet/csv) for ComplaintIQ.
+
+  jobs:
+    complaintiq_pipeline:
+      name: complaintiq_pipeline
+      # Full project run: each notebook is a task, chained in notebook order so a
+      # single job reproduces the analysis end to end. 11_live_demo is excluded --
+      # it is an interactive ipywidgets demo that needs the trained model, not a
+      # pipeline step.
+      tasks:
+        - task_key: explore
+          notebook_task:
+            notebook_path: ${var.notebook_dir}/01_explore
+          environment_key: complaintiq_env
+        - task_key: eda_supervised
+          depends_on:
+            - task_key: explore
+          notebook_task:
+            notebook_path: ${var.notebook_dir}/02_eda_supervised
+          environment_key: complaintiq_env
+        - task_key: eda_unsupervised
+          depends_on:
+            - task_key: eda_supervised
+          notebook_task:
+            notebook_path: ${var.notebook_dir}/03_eda_unsupervised
+          environment_key: complaintiq_env
+        - task_key: baselines_trivial
+          depends_on:
+            - task_key: eda_unsupervised
+          notebook_task:
+            notebook_path: ${var.notebook_dir}/04a_baselines_trivial
+          environment_key: complaintiq_env
+        - task_key: baselines_logreg
+          depends_on:
+            - task_key: baselines_trivial
+          notebook_task:
+            notebook_path: ${var.notebook_dir}/04b_baselines_logreg
+          environment_key: complaintiq_env
+        - task_key: baselines_unsupervised
+          depends_on:
+            - task_key: baselines_logreg
+          notebook_task:
+            notebook_path: ${var.notebook_dir}/appendix/05_baselines_unsupervised
+          environment_key: complaintiq_env
+        - task_key: feature_plan
+          depends_on:
+            - task_key: baselines_unsupervised
+          notebook_task:
+            notebook_path: ${var.notebook_dir}/06_feature_plan
+          environment_key: complaintiq_env
+        - task_key: mllib_supervised
+          depends_on:
+            - task_key: feature_plan
+          notebook_task:
+            notebook_path: ${var.notebook_dir}/07a_mllib_supervised
+          environment_key: complaintiq_env
+        - task_key: mllib_unsupervised
+          depends_on:
+            - task_key: mllib_supervised
+          notebook_task:
+            notebook_path: ${var.notebook_dir}/appendix/07b_mllib_unsupervised
+          environment_key: complaintiq_env
+        - task_key: unsupervised_advanced
+          # Depends on feature_plan, NOT mllib_unsupervised: 08/09/10 read the
+          # parquet directly and share no output with 07a/07b, so a failure in the
+          # full-data MLlib tasks must not block the embedding work.
+          depends_on:
+            - task_key: feature_plan
+          notebook_task:
+            notebook_path: ${var.notebook_dir}/08_unsupervised_advanced
+          environment_key: complaintiq_env
+        - task_key: supervised_embeddings
+          depends_on:
+            - task_key: unsupervised_advanced
+          notebook_task:
+            notebook_path: ${var.notebook_dir}/09_supervised_embeddings
+          environment_key: complaintiq_env
+        - task_key: embeddings_fullcorpus
+          depends_on:
+            - task_key: supervised_embeddings
+          notebook_task:
+            notebook_path: ${var.notebook_dir}/appendix/10_embeddings_fullcorpus
+          environment_key: complaintiq_env
+          # In-memory KMeans on large embedding samples can hang; cap the task at
+          # 3h so a stuck rung fails cleanly instead of running unbounded. The
+          # notebook's descending ladder also drops to smaller sizes on failure.
+          timeout_seconds: 10800
+      # Serverless environment (version 5) shared by every task above. Deps mirror
+      # the [project].dependencies in pyproject.toml (the source of truth the local
+      # uv venv is compiled from) -- keep them aligned when pyproject changes.
+      # pyspark is provided by serverless; pyarrow is omitted (notebooks read
+      # Parquet through spark.read). The complaintiq wheel is installed so the
+      # notebooks' `import complaintiq` works the same as locally.
+      environments:
+        - environment_key: complaintiq_env
+          spec:
+            environment_version: "5"
+            dependencies:
+              - numpy>=1.26
+              - pandas>=2.2
+              - scipy>=1.13
+              - scikit-learn>=1.5
+              - matplotlib>=3.9
+              - seaborn>=0.13
+              # Sentence-transformer embeddings for notebooks 08/09/10. torch runs
+              # on the Free Edition A10 GPU serverless; sentence-transformers pulls
+              # the all-MiniLM-L6-v2 model at runtime.
+              - torch
+              - sentence-transformers
+              # The complaintiq wheel, built by the artifact above. Serverless
+              # environments reference it by its local build path (the bundle
+              # uploads it and rewrites this to the workspace artifact path).
+              - dist/complaintiq-*.whl

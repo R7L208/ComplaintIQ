@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+
+# Fail fast so the mock behaves like a real test dependency: bad inputs or unset
+# test variables should fail the test immediately.
+set -euo pipefail
+
+# Record the full curl invocation so tests can verify the downloader passed the
+# expected URL and flags without making a real network request.
+# Check log file is created.
+echo "curl_args=$*" >>"${TEST_CURL_LOG:?TEST_CURL_LOG is required}"
+
+output_file=""
+
+# Parse only the output-file options this mock cares about and ignore the rest
+# of curl's flags. This keeps the fake small while still testing the downloader's
+# contract with curl.
+while (($#)); do
+    case "$1" in
+      -o|--output)
+          output_file="${2:-}"
+          shift 2
+          ;;
+      --output=*)
+          output_file="${1#--output=}"
+          shift
+          ;;
+      *)
+         shift
+         ;;
+    esac
+done
+
+# A downloader that does not pass an output path would not leave a file for the
+# unzip step, so the mock treats that as a test failure.
+if [[ -z "$output_file" ]]; then
+    echo "mock curl did not receive -o/--output" >&2
+    exit 1
+fi
+
+# Normalize relative output paths so the test log can compare one stable absolute
+# path regardless of the directory where the downloader was launched.
+if [[ "$output_file" != /* ]]; then
+    output_file="$PWD/$output_file"
+fi
+
+if [[ "$output_file" != /* ]]; then
+  output_file="$PWD/$output_file"
+fi
+
+# Log the resolved output path so tests can assert that the downloader writes the
+# zip file to the configured data directory.
+echo "curl_output=$output_file" >> "$TEST_CURL_LOG"
+
+# Create the parent directory because real curl can write only if the destination
+# directory exists, and the downloader is responsible for preparing that path.
+mkdir -p "$(dirname "$output_file")"
+echo "fake zip contents from download" > "$output_file"

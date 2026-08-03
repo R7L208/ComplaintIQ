@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+
+# Fail fast so the mock fails the test immediately if required environment
+# variables are missing or an expected command fails.
+set -euo pipefail
+
+# Record the full unzip invocation so tests can verify the downloader passed the
+# expected zip file and destination directory without using the real unzip tool.
+# Check log file is created.
+echo "unzip args=$*" >>"${TEST_UNZIP_LOG:?TEST_UNZIP_LOG is required}"
+
+zip_file=""
+output_dir=""
+
+# Parse only the arguments this mock cares about: the zip file and the -d output
+# directory. Other unzip flags are ignored so the fake stays focused on the test.
+while (($#)); do
+    case "$1" in
+        -d)
+            output_dir="${2:-}"
+            shift 2
+            ;;
+        -*)
+            shift
+            ;;
+        *)
+            zip_file="$1"
+            shift
+            ;;
+    esac
+done
+
+# The downloader must pass a zip file because this mock is standing in for the
+# extraction step, not the download step.
+if [[ -z "$zip_file" ]]; then
+    echo "fake unzip did not receive a zip file" >&2
+    exit 1
+fi
+
+# Requiring -d proves the downloader controls where files are extracted instead
+# of relying on the current working directory.
+if [[ -z "$output_dir" ]]; then
+    echo "fake unzip did not receive -d output directory" >&2
+    exit 1
+fi
+
+# Normalize relative paths so assertions can compare stable absolute paths even
+# when the downloader is launched from different directories.
+if [[ "$zip_file" != /* ]]; then
+    zip_file="$PWD/$zip_file"
+fi
+
+if [[ "$output_dir" != /* ]]; then
+    output_dir="$PWD/$output_dir"
+fi
+
+# Log the resolved paths so tests can assert the downloader passed the expected
+# zip file and extraction directory to unzip.
+echo "unzip_zip=$zip_file" >> "$TEST_UNZIP_LOG"
+echo "unzip_dir=$output_dir" >> "$TEST_UNZIP_LOG"
+
+# Fail if the fake curl step did not create the zip file that unzip was asked to
+# extract. This catches broken handoff between download and extraction.
+if [[ ! -f "$zip_file" ]]; then
+    echo "zip file does not exist: $zip_file" >&2
+    exit 1
+fi
+
+# Load the configured CSV filename so the fake unzip creates the same file the
+# real downloader expects to exist after extraction.
+source "${TEST_DIR_ROOT:?TEST_DIR_ROOT is required}/config.env"
+
+mkdir -p "$output_dir"
+
+# Create a tiny CSV fixture in place of extracting the real CFPB archive. The
+# content only needs to prove that a CSV file was produced.
+echo "complaint_id,product,issue" > "$output_dir/$COMPLAINTS_CSV"

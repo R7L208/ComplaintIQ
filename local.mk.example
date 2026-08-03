@@ -1,0 +1,19 @@
+# local.mk (developer-only, git-ignored) -----------------------------------
+#
+# Copy this file to local.mk and set an internal package index for machines
+# that cannot reach public PyPI (e.g. a supply-chain hosts blocklist).
+#
+#     cp local.mk.example local.mk
+#
+# The Makefile only uses this as a fallback: it activates the index *only* when
+# `make lock`/`make venv` runs AND pypi.org is unreachable. Machines with normal
+# PyPI access ignore it entirely. Databricks developers can find the internal
+# index URL in the internal package-management guidance.
+
+DATABRICKS_PYPI_PROXY := https://<your-internal-pypi-index>/simple/
+
+# Your personal Databricks CLI profile name from ~/.databrickscfg. Required by
+# the db-* targets (bundle deploy/run, Git folder create/pull, data upload).
+# The profile supplies your workspace host, so each developer targets their own
+# Databricks workspace. Create one with: databricks auth login --host <url>
+DATABRICKS_PROFILE := my-databricks-profile

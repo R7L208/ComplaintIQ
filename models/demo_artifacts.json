@@ -1,0 +1,20 @@
+{
+  "model": "narrative_tfidf_logreg",
+  "recipe": "TfidfVectorizer(max_features=20000, min_df=5, stop_words=english) + LogisticRegression(max_iter=200, class_weight=balanced)",
+  "metrics": {
+    "pr_auc": 0.2694868011039494,
+    "roc_auc": 0.9558193752608167,
+    "brier": 0.061470893712961786,
+    "lift_top1pct": 18.43189965633993,
+    "lift_top5pct": 12.158721583365743,
+    "lift_top10pct": 8.602123786875564
+  },
+  "queue_thresholds": {
+    "top01": 0.9722978596776347,
+    "top05": 0.8169350999900958,
+    "top10": 0.49220796928095245
+  },
+  "test_base_rate": 0.01939183631331986,
+  "note": "class_weight=balanced -> scores rank well but are NOT calibrated probabilities; the demo shows queue-percentile band + driver words, not a raw %.",
+  "trained_ts": "2026-08-02T07:43:09"
+}

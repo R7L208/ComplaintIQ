@@ -1,0 +1,77 @@
+# uv's own build backend builds the complaintiq wheel from src/complaintiq
+# (uv_build uses the src layout by convention). The Databricks bundle builds this
+# wheel and installs it on the serverless environment so the notebooks can
+# `import complaintiq` there too.
+[build-system]
+requires = ["uv_build>=0.11,<0.13"]
+build-backend = "uv_build"
+
+[project]
+name = "complaintiq"
+version = "0.1.0"
+description = "Data exploration and ML modeling environment for CFPB consumer complaint triage."
+readme = "README.md"
+requires-python = ">=3.11"
+
+# Runtime dependencies of the complaintiq PACKAGE itself (what src/complaintiq/*
+# imports). These become the wheel's Requires-Dist, so keep them to things that
+# install cleanly everywhere the wheel runs -- including Databricks serverless.
+# pyspark is deliberately NOT here: it is environment-provided on both Databricks
+# serverless and the local venv (see the `local` extra), and forcing pip to
+# download it into a serverless environment fails.
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "scipy>=1.13",
+    "scikit-learn>=1.5",
+    "matplotlib>=3.9",
+    "seaborn>=0.13",
+]
+
+[project.optional-dependencies]
+# Local notebook execution: pyspark to read the Parquet via a local Spark
+# session, pyarrow for Parquet, ipykernel so editors can attach a kernel. These
+# are environment-provided on Databricks serverless, so they are an extra rather
+# than a hard package dependency. `make venv` installs this by default.
+local = [
+    "pyspark>=3.5,<4",
+    "pyarrow>=16.0",
+    "ipykernel>=6.29",
+]
+# Optional heavier model families mentioned in the README. Install with:
+#   make venv EXTRAS=boost         (or EXTRAS=imbalanced, EXTRAS="boost imbalanced")
+boost = [
+    "xgboost>=2.1",
+    "lightgbm>=4.5",
+]
+imbalanced = [
+    "imbalanced-learn>=0.12",
+]
+# Developer tooling: formatting (ruff), type checking (mypy), and notebook
+# execution for verification (nbconvert/jupyter). Install with:
+#   make venv EXTRAS=dev
+dev = [
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "nbconvert>=7.16",
+    "nbclient>=0.10",
+    "jupyter-client>=8.6",
+    # Python 3.12 dropped the stdlib `distutils`; PySpark 3.5 still imports it.
+    "setuptools>=70",
+]
+
+# uv_build builds the package at src/complaintiq (module name = project name).
+# src/etl holds the unrelated C++ ETL source and is not part of the wheel.
+[tool.uv.build-backend]
+module-name = "complaintiq"
+module-root = "src"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.mypy]
+ignore_missing_imports = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+warn_return_any = false
