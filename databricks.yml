@@ -9,10 +9,16 @@
 #   - a serverless job that runs the full notebook pipeline (01 -> 10) from the
 #     Git folder, one task per notebook, chained in order.
 #
-# It does NOT sync notebooks/code. Bi-directional editing is handled by a
-# Databricks Git folder (see the `db-*` targets in the Makefile): git is the
-# sync medium -- edit locally or in the Databricks UI and push/pull to keep
-# both sides in step. This bundle manages cloud resources and the wheel artifact.
+# Bi-directional editing of the full notebook suite is handled by a Databricks
+# Git folder (see the `db-*` targets in the Makefile): git is the sync medium --
+# edit locally or in the Databricks UI and push/pull to keep both sides in step.
+#
+# In ADDITION, `bundle deploy` syncs the interactive live-scoring demo and its
+# trained-model artifacts into the workspace (see the `sync.include` block
+# below), so the demo lands in the workspace from a single deploy command and
+# does not depend on a separate Git-folder pull. They upload to
+# <workspace_root>/files/ (notebooks/11_live_demo + models/), and the demo walks
+# up from its own location to find models/, so the colocated layout just works.
 #
 # `databricks bundle` matches the target `workspace.host` below to the matching
 # profile in ~/.databrickscfg automatically, so no -p flag is required.
@@ -53,6 +59,23 @@ artifacts:
     path: .
     files:
       - source: dist/complaintiq-*.whl
+
+# Sync the live-scoring demo notebook and its trained-model artifacts into the
+# workspace on `bundle deploy`. By default the direct engine uploads only what
+# artifacts/jobs reference; listing these paths explicitly guarantees the demo
+# and its model land under <workspace_root>/files/ so the deployed demo can load
+# the model without a separate Git-folder pull. Large data (data/, *.parquet)
+# stays out via .gitignore + the excludes below.
+sync:
+  include:
+    - notebooks/11_live_demo.ipynb
+    - models/relief_pipeline.joblib
+    - models/demo_artifacts.json
+  exclude:
+    - "**/*.parquet"
+    - "**/*.csv"
+    - mlflow.db
+    - mlruns/
 
 targets:
   # Databricks Free Edition workspace (serverless-only). Default target.
