@@ -15,14 +15,16 @@ Relief is rare. "Always predict no relief" scores **~98.7% accuracy** while catc
 Rank complaints by their product's historical relief rate (no ML). This reaches **PR-AUC ~0.11**, and read at several queue depths: **9.7x lift at top-10%, 19.2x at top-5%, 29.4x at top-1%.** A learned model has to beat *this* baseline, not the raw base rate. Computing it (not just assuming it's weak) is what makes "beat the baseline" real. *(04a §product-bucket, 02 §9a)*
 
 ## 3. Top-10% lift hits a ceiling; PR-AUC keeps rising
-| Model | PR-AUC | top-10% lift |
-|---|---|---|
-| Product-bucket heuristic | 0.11 | 9.7× |
-| Logistic regression, raw metadata | 0.16 | 9.7× |
-| Engineered metadata (target/freq encoding, interactions, text-shape, date) | 0.21 | 9.9× |
-| Full-data Spark MLlib, engineered (16.5M rows) | 0.214 | 9.68× |
+| Model | PR-AUC | top-1% | top-5% | top-10% lift |
+|---|---|---|---|---|
+| Product-bucket heuristic | 0.11 | 29.4× | 19.2× | 9.7× |
+| Logistic regression, raw metadata | 0.158 | 50.6× | 19.3× | 9.72× |
+| Engineered metadata (target/freq encoding, interactions, text-shape, date) | 0.223 | 61.6× | 19.7× | 9.95× |
+| Full-data Spark MLlib, engineered (16.5M rows) | 0.214 | 59.7× | 18.8× | 9.68× |
 
-Engineering boosts **PR-AUC**. **Top-10% lift is mathematically capped at 10x** (lift = precision ÷ base rate ≤ 1 ÷ 0.1 = 10x). The model sits at ~97% of that ceiling. "Flat" lift isn't the model failing; it's the metric hitting its limit. *(04b, 06, 07a)*
+Engineering boosts **PR-AUC**. **Top-10% lift is mathematically capped at 10x** (lift = precision ÷ base rate ≤ 1 ÷ 0.1 = 10x). The model sits at ~97% of that ceiling. "Flat" lift isn't the model failing; it's the metric hitting its limit. Read at the shallow top-1% queue, the ranking power the 10% slice cannot express is visible: the learned models reach ~50-62× vs the heuristic's 29.4×. *(04b, 06, 07a)*
+
+> The raw-metadata and engineered-metadata rows are from a reproduction run on Databricks serverless (2026-08-04); `metrics_04b.json` / `metrics_06.json` persisted to the volume. Both are on a 300k stratified sample at test base rate ~0.34%; the top-1% lift is a touch higher than the full-16.5M model's 59.7× because the small-sample base rate differs from full scale (finding 5). PR-AUC 0.223 here vs the earlier ~0.21 reflects a different sample draw.
 
 ## 4. Read a smaller queue to see what the model can do
 Same model, different queue depths, with the heuristic baseline for contrast:

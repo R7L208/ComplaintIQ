@@ -7,7 +7,8 @@
 #   - the complaintiq wheel (built from src/), installed on the serverless
 #     environment so the notebooks can `import complaintiq`,
 #   - a serverless job that runs the full notebook pipeline (01 -> 10) from the
-#     Git folder, one task per notebook, chained in order.
+#     bundle-synced files tree (${workspace.file_path}/notebooks), one task per
+#     notebook, chained in order.
 #
 # Bi-directional editing of the full notebook suite is handled by a Databricks
 # Git folder (see the `db-*` targets in the Makefile): git is the sync medium --
@@ -42,10 +43,11 @@ variables:
     default: data
   notebook_dir:
     description: >-
-      Absolute workspace path to the notebooks directory. Resolved for the
-      signed-in user (no identity committed) and points at the Git folder clone,
-      so the job always runs what you have pushed.
-    default: /Workspace/Users/${workspace.current_user.userName}/ComplaintIQ/notebooks
+      Absolute workspace path to the notebooks directory. Points at the
+      bundle-synced files tree (${workspace.file_path}/notebooks), so the job
+      runs exactly the notebooks that `bundle deploy` uploads - no dependence on
+      a separately-maintained Git folder clone.
+    default: ${workspace.file_path}/notebooks
 
 # Build the complaintiq wheel from src/ (see [build-system] in pyproject.toml).
 # `databricks bundle deploy` runs the build and uploads the wheel; the serverless
