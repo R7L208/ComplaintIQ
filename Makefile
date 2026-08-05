@@ -176,6 +176,10 @@ kernel: $(VENV_STAMP)
 	@$(VENV_PYTHON) -m ipykernel install --user \
 		--name complaintiq --display-name "Python (ComplaintIQ)"
 
+figures:
+	@echo "Regenerating result figures into docs/figures/ ..."
+	@$(VENV_PYTHON) scripts/generate_figures.py
+
 test:
 	@echo "Running test suite..."
 	@bash test/test_download_cfpb_complaints.sh
@@ -295,5 +299,5 @@ db-data:
 
 # Mark these as command targets instead of real files so make always runs their
 # recipes when requested.
-.PHONY: all download_data build parquet validate-parquet test clean_data clean lock venv clean_venv kernel \
+.PHONY: all download_data build parquet validate-parquet figures test clean_data clean lock venv clean_venv kernel \
 	db-repo-create db-pull db-validate db-deploy db-run db-data

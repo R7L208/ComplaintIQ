@@ -9,6 +9,7 @@ It scores complaints for relief risk so operations and compliance teams can prio
 * [Findings](docs/FINDINGS.md), the key results and conclusions across all notebooks, with caveats.
 * [Glossary](docs/GLOSSARY.md), plain-language reference for every term and metric used in the project, with good/bad ranges for each metric.
 * [Project proposal](docs/project_proposal.md), the original problem statement, plan, and evaluation design.
+* [Figures](docs/figures/), result charts used throughout the docs. Regenerate them from the data with `make figures` (runs `scripts/generate_figures.py`).
 
 ## What it does
 
@@ -85,6 +86,8 @@ Other candidate models may include:
 
 Only 23% of complaints carry a narrative. So TF-IDF text features apply to that subset. Complaints without narratives fall back to metadata-only scoring. Both feed one ranked queue, which means they need to be on the same probability scale. That's achieved by calibration (Platt or isotonic). Otherwise a metadata-only 0.6 and a narrative-model 0.6 mean different things and the merged ranking is invalid.
 
+![Scoring pipeline: complaint to ranked review queue](docs/figures/08_block_diagram.png)
+
 ## Evaluation
 
 ComplaintIQ uses these metrics.
@@ -97,6 +100,10 @@ ComplaintIQ uses these metrics.
 The baseline to beat isn't the raw base rate. It's the product-bucket heuristic: rank complaints by their product's historical relief rate (no ML, no training). This cheap heuristic already reaches ~9.7x lift at the top 10% (and 19.2x at top-5%, 29.4x at top-1%), measured leakage-safe on a time-split in `02_eda_supervised.ipynb` section 9a. A learned model is only useful if it clears that bar, which it does most clearly at the shallow top-1% queue (59.7x vs 29.4x).
 
 A fixed "3x lift" number is meaningless without context. At 1.28% base rate, 3x lift means an analyst reviews ~500 complaints per week at 1 in 25 being relief (versus 1 in 78 random). That's real but modest. At 9x lift, it's 1 in 9. The heuristic already does 9x, so a learned model needs to beat 9x to matter.
+
+The catch is that top-10% lift is capped at 10x by arithmetic (lift = precision ÷ base rate, and precision ≤ 1). Both models sit near that ceiling, so they look tied there. Read a shallower queue and the learned model separates: at the top 1% it hits **59.7x** versus the heuristic's 29.4x. See [docs/FINDINGS.md](docs/FINDINGS.md) for the full breakdown.
+
+![Lift versus queue depth](docs/figures/05_lift_vs_depth.png)
 
 ## Data Pipeline
 
@@ -367,24 +374,51 @@ complaintiq/
 ├── README.md
 ├── LICENSE
 ├── config.env
-├── databricks.yml
+├── databricks.yml            # Databricks Asset Bundle (UC volume, wheel, pipeline job)
 ├── local.mk.example
+├── pyproject.toml            # complaintiq package + dependency groups
+├── requirements.txt
 ├── vcpkg.json
-├── data/
+├── data/                     # gitignored; regenerate with `make parquet`
 │ ├── complaints.parquet
 │ └── complaints_narrative_only.parquet
+├── docs/
+│ ├── FINDINGS.md             # measured results across all notebooks
+│ ├── GLOSSARY.md             # term + metric reference
+│ └── project_proposal.md
+├── models/
+│ ├── relief_pipeline.joblib  # trained demo model (narrative TF-IDF + LogReg)
+│ └── demo_artifacts.json     # queue thresholds + metrics for the live demo
 ├── notebooks/
-│ └── 01_explore.ipynb
+│ ├── 01_explore.ipynb
+│ ├── 02_eda_supervised.ipynb
+│ ├── 03_eda_unsupervised.ipynb
+│ ├── 04a_baselines_trivial.ipynb
+│ ├── 04b_baselines_logreg.ipynb
+│ ├── 06_feature_plan.ipynb
+│ ├── 07a_mllib_supervised.ipynb   # full 16.5M-row Spark MLlib run
+│ ├── 08_unsupervised_advanced.ipynb
+│ ├── 09_supervised_embeddings.ipynb
+│ ├── 11_live_demo.ipynb           # interactive ipywidgets scoring demo
+│ └── appendix/                    # supporting notebooks, not on the main line
+│   ├── 05_baselines_unsupervised.ipynb
+│   ├── 07b_mllib_unsupervised.ipynb
+│   └── 10_embeddings_fullcorpus.ipynb
 ├── scripts/
 │ └── download_cfpb_complaints.sh
 ├── src/
+│ ├── complaintiq/             # shared Python package the notebooks import
+│ │ ├── data.py               # load + chronological split helpers
+│ │ ├── sampling.py           # stratified sampling
+│ │ ├── features.py           # encoders, text-shape features
+│ │ ├── text.py               # narrative normalization
+│ │ └── metrics.py            # PR-AUC, ROC-AUC, Brier, top-k lift
 │ └── etl/
-│ └── csv_to_parquet.cpp
+│   └── csv_to_parquet.cpp    # C++ Arrow/Parquet ETL
 └── test/
- └── test_download_cfpb_complaints.sh
 ```
 
-Large generated files should be handled carefully. If the full CSV or Parquet files are too large for normal Git tracking, use a smaller sample dataset, Git LFS, or regenerate the files locally.
+Large generated files (`data/`, the parquets, MLflow store) are gitignored. Regenerate them locally with `make parquet`, or pull them onto Databricks with the bundle's data step. The trained demo model in `models/` is small enough to track and travels with the repo so `11_live_demo` runs anywhere.
 
 ## Local Setup
 
@@ -557,6 +591,12 @@ make parquet NARRATIVE_ONLY=1
 Creates the narrative-filtered Parquet dataset at `data/complaints_narrative_only.parquet`.
 
 ```bash
+make figures
+```
+
+Regenerates the result charts in `docs/figures/` from `data/complaints.parquet` (needs the Parquet built first).
+
+```bash
 make clean
 ```
 
@@ -585,21 +625,24 @@ make db-run # run the exploration notebook as a serverless job
 make db-data # upload data/complaints.parquet to the UC volume
 ```
 
-## Planned ML Workflow
+## ML Workflow
 
-After the ETL step, the planned modeling workflow is:
+The modeling workflow, implemented across the notebooks, is:
 
 ```text
 cleaned Parquet
- -> time-based train/test split
- -> TF-IDF text features
- -> structured metadata features
- -> baseline classifier
- -> evaluation metrics
- -> model interpretation
+ -> chronological train/test split (80th-percentile date cut)
+ -> stratified 300k sample for fast sklearn iteration
+ -> engineered features (target/freq encoding, interactions, text-shape, date, TF-IDF)
+ -> class-weighted logistic regression
+ -> imbalance-aware evaluation (PR-AUC, top-k lift, ROC-AUC, Brier)
+ -> validate at full 16.5M-row scale via Spark MLlib
+ -> interpret via coefficients + the live scoring demo
 ```
 
-The split is chronological (train on older complaints, validate on the most recent months) so that evaluation reflects deployment on future complaints and does not leak later data into training.
+The split is chronological (train on older complaints, test on the most recent months) so that evaluation reflects deployment on future complaints and does not leak later data into training.
+
+**Headline result:** the engineered model reaches **59.7x lift at the top 1%** of the queue on the full 16.5M-row corpus (about 1 in 5 flagged complaints is a real relief case, versus roughly 1 in 300 at random), and the 300k-sample results hold at full scale. A separate finding is that representation choice is task-dependent: TF-IDF wins relief prediction, sentence embeddings win theme clustering. See [docs/FINDINGS.md](docs/FINDINGS.md) for the full measured results, tables, and caveats.
 
 Candidate input features include:
 

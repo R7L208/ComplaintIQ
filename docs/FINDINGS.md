@@ -11,6 +11,8 @@ models use a leakage-safe, chronological split (train on older complaints, test 
 ## 1. Accuracy won't work; use ranking metrics
 Relief is rare. "Always predict no relief" scores **~98.7% accuracy** while catching zero relief cases. Judge on **PR-AUC** and **top-k lift** instead. *(04a, 04b)*
 
+![Target imbalance](figures/01_target_imbalance.png)
+
 ## 2. The product-bucket heuristic beats the raw base rate
 Rank complaints by their product's historical relief rate (no ML). This reaches **PR-AUC ~0.11**, and read at several queue depths: **9.7x lift at top-10%, 19.2x at top-5%, 29.4x at top-1%.** A learned model has to beat *this* baseline, not the raw base rate. Computing it (not just assuming it's weak) is what makes "beat the baseline" real. *(04a §product-bucket, 02 §9a)*
 
@@ -24,6 +26,10 @@ Rank complaints by their product's historical relief rate (no ML). This reaches 
 
 Engineering boosts **PR-AUC**. **Top-10% lift is mathematically capped at 10x** (lift = precision ÷ base rate ≤ 1 ÷ 0.1 = 10x). The model sits at ~97% of that ceiling. "Flat" lift isn't the model failing; it's the metric hitting its limit. Read at the shallow top-1% queue, the ranking power the 10% slice cannot express is visible: the learned models reach ~50-62× vs the heuristic's 29.4×. *(04b, 06, 07a)*
 
+![PR-AUC by model](figures/04_pr_auc_by_model.png)
+
+![Model progress across iterations](figures/09_model_progress.png)
+
 > The raw-metadata and engineered-metadata rows are from a reproduction run on Databricks serverless (2026-08-04); `metrics_04b.json` / `metrics_06.json` persisted to the volume. Both are on a 300k stratified sample at test base rate ~0.34%; the top-1% lift is a touch higher than the full-16.5M model's 59.7× because the small-sample base rate differs from full scale (finding 5). PR-AUC 0.223 here vs the earlier ~0.21 reflects a different sample draw.
 
 ## 4. Read a smaller queue to see what the model can do
@@ -36,6 +42,8 @@ Same model, different queue depths, with the heuristic baseline for contrast:
 | **top-1%** | **59.7×** | 29.4× | 100× |
 
 **"Ceiling" is the maximum lift arithmetically possible at that queue depth, not a model limit.** Lift = precision ÷ base rate, and precision can't exceed 1.0, so at the top-k fraction lift is capped at 1/k (top-10% → 10×, top-5% → 20×, top-1% → 100×). Reading the table against the ceiling is the point: at top-10% the models hit 9.7× against a 10× ceiling, so they're at ~97% of the most that's *possible* there. There is no room left to look better, regardless of how good the model is. The heuristic and learned model therefore tie at 10% and 5% (both near-saturated). Only at **top-1%**, where the ceiling is a distant 100×, is there headroom to separate them, and the learned model does: **59.7× vs 29.4×**. That is exactly the shallow queue reviewers actually work, where ~**1 in 5** flagged complaints is a relief case (vs. 0.34% random). The operating point (how deep reviewers work) matters more than tuning the model. Every notebook now reports lift at top-1%, 5%, and 10%. *(07a, 02, 04)*
+
+![Lift versus queue depth](figures/05_lift_vs_depth.png)
 
 ## 5. Sampled results hold at full scale
 Engineered model on 300k stratified sample: PR-AUC 0.21. Same model on full 16.5M rows with Spark MLlib: **0.214**. Nearly identical. Validates the sklearn-on-sample workflow for fast iteration. *(06 vs 07a)*
@@ -51,11 +59,15 @@ GPU serverless (NVIDIA A10G):
 
 The best representation depends on the task. Theme clustering rewards meaning (embeddings win). Relief prediction is driven by word choice (TF-IDF wins). Embeddings help only as a complement (stacked), not a replacement. *(08, 09, 10)*
 
+![Task-dependent representation](figures/06_representation.png)
+
 ## 7. Larger embedding samples don't improve clustering; full-corpus is impractical here
 Embedding clustering was re-run on GPU serverless at 250k (ARI **0.056**, NMI 0.232), and this stayed **below the 8k-sample's 0.067**: a bigger sample did not buy better themes. Scaling to the full 3.8M in-memory KMeans is impractical on Free Edition serverless (the job runs for hours; the fitted MLlib model also exceeds Spark Connect's 256MB transfer cap, see the 07b note). So the practical result is: embeddings beat TF-IDF for clustering, but more rows past a small sample add cost without quality. *(10)*
 
 ## 8. The unsupervised side is the weaker half, and where the headroom is
 Best clustering (ARI ~0.067) only weakly recovers the known theme structure. MinHash/LSH, LSA, and embeddings each help incrementally, but this is the honest "not solved" part of the project. Clear place for future work. *(05, 06, 08)*
+
+![Clustering ARI by representation lever](figures/07_clustering_ari.png)
 
 ---
 
